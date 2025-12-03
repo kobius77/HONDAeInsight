@@ -12,8 +12,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # FIX 1: Use Java 17. Most "Exit Code 1" errors recently 
-    # are because the system defaults to Java 11 but Gradle needs 17.
     - name: set up JDK 17
       uses: actions/setup-java@v4
       with:
@@ -21,11 +19,23 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
+    - name: Remove API Key Dependency
+      run: |
+        # 1. Create dummy google-services.json
+        # We still need this because the build system expects it, 
+        # but it won't be used for anything real.
+        echo '{"project_info":{"project_number":"0","project_id":"dummy"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:mock","android_client_info":{"package_name":"de.danielh.hondae_insight"}},"api_key":[{"current_key":"mock"}]}]}' > app/google-services.json
+
+        # 2. Use 'sed' to edit the Java file automatically
+        # Delete the import line that causes the crash
+        sed -i '/import static de.danielh.hondae_insight.IternioApiKeyStore.ITERNIO_API_KEY;/d' app/src/main/java/de/danielh/hondae_insight/CommunicateActivity.java
+
+        # Replace the missing variable with a string so the code is valid
+        sed -i 's/ITERNIO_API_KEY/"DISABLED"/g' app/src/main/java/de/danielh/hondae_insight/CommunicateActivity.java
+
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
-    # FIX 2: Added "-x lint". This prevents the build from failing 
-    # just because of minor code formatting issues.
     - name: Build with Gradle
       run: ./gradlew assembleDebug -x lint
 
