@@ -631,6 +631,27 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
                 + _ambientTemp + "," + _power + "," + _amp + "," + _volt + ","
                 + _auxBat + "," + _chargingConnection.getName() + "," + _isCharging
                 + "," + _speed + "," + _lat + "," + _lon);
+        
+        String statusMessage = "";
+
+        // 2. Safety Check: Does the file writer exist?
+        if (_logFileWriter == null) {
+            statusMessage = "LOG FILE MISSING ❌";
+        } else {
+            // 3. Write the data
+            _logFileWriter.println(dataLine);
+
+            // 4. Verify the write succeeded
+            if (_logFileWriter.checkError()) {
+                statusMessage = "WRITE ERROR ❌";
+            }
+        }
+
+        // 5. Update the UI only if there is a problem
+        // (Normally this box just shows the timestamp)
+        if (!statusMessage.isEmpty()) {
+            setText(_messageText, statusMessage);
+        }
     }
 
     private void closeLogFile() {
