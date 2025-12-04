@@ -3,6 +3,10 @@ name: Build APK
 on:
   push:
     branches: [ "master", "main" ]
+    paths-ignore:
+      - '**.md'           # Ignores all markdown files anywhere in the repo
+      - 'docs/**'         # Ignores everything in a 'docs' folder (optional)
+      - '.gitignore'      # Ignores gitignore changes
   workflow_dispatch:
 
 jobs:
