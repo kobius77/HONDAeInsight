@@ -1,7 +1,5 @@
 package de.danielh.hondae_insight;
 
-import static de.danielh.hondae_insight.IternioApiKeyStore.ITERNIO_API_KEY;
-
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Context;
