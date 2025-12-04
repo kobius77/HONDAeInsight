@@ -625,16 +625,16 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
     }
 
     private void writeLineToLogFile() {
-        //"VIN,epoch,ODO,SoC (dash),SoC (min),SoC (max),SoH,Battemp,Ambienttemp,kW,Amp,Volt,AuxBat,Connection,Charging,Speed,Lat,Lon"
-        _logFileWriter.println(_sysTimeMs + "," + _odo + "," + _soc + ","
+        // 1. DEFINE 'dataLine' FIRST (This was missing causing your error)
+        String dataLine = _sysTimeMs + "," + _odo + "," + _soc + ","
                 + _socMin + "," + _socMax + "," + _soh + "," + _batTemp + ","
                 + _ambientTemp + "," + _power + "," + _amp + "," + _volt + ","
                 + _auxBat + "," + _chargingConnection.getName() + "," + _isCharging
-                + "," + _speed + "," + _lat + "," + _lon);
-        
+                + "," + _speed + "," + _lat + "," + _lon;
+
         String statusMessage = "";
 
-        // 2. Safety Check: Does the file writer exist?
+        // 2. Safety Check: Is the file writer null?
         if (_logFileWriter == null) {
             statusMessage = "LOG FILE MISSING ❌";
         } else {
@@ -647,8 +647,7 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
             }
         }
 
-        // 5. Update the UI only if there is a problem
-        // (Normally this box just shows the timestamp)
+        // 5. Update UI if there is an error
         if (!statusMessage.isEmpty()) {
             setText(_messageText, statusMessage);
         }
