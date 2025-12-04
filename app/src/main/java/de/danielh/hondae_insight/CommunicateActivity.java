@@ -46,6 +46,12 @@ import java.util.Locale;
 
 import javax.net.ssl.HttpsURLConnection;
 
+import org.eclipse.paho.client.mqttv3.MqttClient;
+import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
+import org.eclipse.paho.client.mqttv3.MqttMessage;
+import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
+import java.net.URI; // Required for parsing the address
+
 public class CommunicateActivity extends AppCompatActivity implements LocationListener {
 
     public static final int CAN_BUS_SCAN_INTERVALL = 1000;
@@ -473,36 +479,102 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
         }
     }
 
-    private void sendDataToIternoAPI() { //Send data to Iterno API
+    private void sendDataToIternoAPI() { // REPURPOSED FOR MQTT (With Auth)
         try {
-            final String requestString = Thread.currentThread().getName();
-            final URL url = new URL(requestString);
-            HttpsURLConnection con = (HttpsURLConnection) url.openConnection();
-            con.setRequestMethod("POST");
-            con.getOutputStream().write(new byte[0]);
-            final BufferedReader br = new BufferedReader(new InputStreamReader(con.getInputStream(), StandardCharsets.UTF_8));
-            final StringBuilder response = new StringBuilder();
-            String responseLine;
-            while ((responseLine = br.readLine()) != null) {
-                response.append(responseLine.trim());
-            }
-            if (response.toString().contains("ok")) {
-                _lastEpochSuccessfulApiSend = _epoch;
-                setText(_apiStatusText, "\uD83D\uDFE2");
-            }
-            //setText(_messageText, _messageText.getText() + " " + response.toString());
-        } catch (IOException e) {
-            if (_epoch - _lastEpochSuccessfulApiSend > 9) {
-                setText(_apiStatusText, "\uD83D\uDD34");
-            } else if (_epoch - _lastEpochSuccessfulApiSend > 1) {
-                setText(_apiStatusText, "\uD83D\uDFE1");
+            // 1. Get the raw input string (e.g., "tcp://user:pass@192.168.1.5:1883")
+            String rawInput = _preferences.getString(USER_TOKEN_PREFS, "").trim();
+            
+            // Default values
+            String brokerUrl = rawInput;
+            String username = null;
+            String password = null;
+
+            // 2. Parse Credentials if "@" symbol is present
+            if (rawInput.contains("@") && rawInput.startsWith("tcp://")) {
+                try {
+                    // Remove "tcp://" to parse the rest easily
+                    String withoutScheme = rawInput.substring(6);
+                    // Split at the last '@' to separate credentials from host
+                    int atIndex = withoutScheme.lastIndexOf("@");
+                    
+                    if (atIndex != -1) {
+                        String userPass = withoutScheme.substring(0, atIndex);
+                        String hostPort = withoutScheme.substring(atIndex + 1);
+                        
+                        // Reconstruct clean broker URL for Paho
+                        brokerUrl = "tcp://" + hostPort;
+                        
+                        // Split username and password
+                        int colonIndex = userPass.indexOf(":");
+                        if (colonIndex != -1) {
+                            username = userPass.substring(0, colonIndex);
+                            password = userPass.substring(colonIndex + 1);
+                        } else {
+                            username = userPass;
+                        }
+                    }
+                } catch (Exception e) {
+                    // If parsing fails, try using raw string
+                    brokerUrl = rawInput;
+                }
             }
 
-            if (e.getMessage() != null) {
-                setText(_messageText, e.getMessage());
-            } else {
-                setText(_messageText, "unexpected Exception at Iternio API");
+            // 3. Setup MQTT Options
+            MqttConnectOptions connOpts = new MqttConnectOptions();
+            connOpts.setCleanSession(true);
+            connOpts.setConnectionTimeout(5); // 5 seconds timeout
+            
+            // Apply Auth if we found it
+            if (username != null && !username.isEmpty()) {
+                connOpts.setUserName(username);
+                if (password != null) {
+                    connOpts.setPassword(password.toCharArray());
+                }
             }
+
+            // 4. Construct Payload
+            String clientId = "HondaE_Android_" + System.currentTimeMillis();
+            String topic = "hondae/status";
+            String payload = "{" +
+                    "\"soc\":" + _soc +
+                    ",\"soh\":" + _soh +
+                    ",\"power\":" + _power +
+                    ",\"amp\":" + _amp +
+                    ",\"volt\":" + _volt +
+                    ",\"batt_temp\":" + _batTemp +
+                    ",\"ambient_temp\":" + _ambientTemp +
+                    ",\"is_charging\":" + _isCharging +
+                    ",\"charging_mode\":\"" + _chargingConnection.getName() + "\"" +
+                    ",\"speed\":" + _speed +
+                    ",\"odo\":" + _odo +
+                    ",\"lat\":" + _lat +
+                    ",\"lon\":" + _lon +
+                    ",\"elevation\":" + _elevation +
+                    ",\"timestamp\":" + _epoch +
+                    "}";
+
+            // 5. Connect and Publish
+            MemoryPersistence persistence = new MemoryPersistence();
+            MqttClient sampleClient = new MqttClient(brokerUrl, clientId, persistence);
+            
+            sampleClient.connect(connOpts);
+            
+            MqttMessage message = new MqttMessage(payload.getBytes());
+            message.setQos(0);
+            sampleClient.publish(topic, message);
+            
+            sampleClient.disconnect();
+
+            // Success UI
+            _lastEpochSuccessfulApiSend = _epoch;
+            setText(_apiStatusText, "🔵"); 
+
+        } catch (Exception e) {
+            // Error UI
+            if (_epoch - _lastEpochSuccessfulApiSend > 9) {
+                setText(_apiStatusText, "🔴");
+            }
+            setText(_messageText, "MQTT Err: " + e.getMessage());
         }
     }
 
