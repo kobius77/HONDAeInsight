@@ -219,7 +219,7 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
 
         _iternioSendToAPISwitch.setOnCheckedChangeListener((buttonView, isChecked) -> handleIternioSendToAPISwitch(isChecked));
         _iternioSendToAPISwitch.setChecked(_preferences.getBoolean(ITERNIO_SEND_TO_API_SWITCH, false));
-        _abrpUserTokenText.setText(_preferences.getString(USER_TOKEN_PREFS, "User-Token"));
+        _abrpUserTokenText.setText(_preferences.getString(USER_TOKEN_PREFS, "tcp://user:pass@HOST:PORT"));
 
         _connectButton = findViewById(R.id.communicate_connect);
 
