@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">e Insight</string>
+    <string name="app_name">e2mqtt</string>
     <string name="messages">Messages:</string>
     <string name="message">Message</string>
     <string name="send">Send</string>
@@ -34,7 +34,7 @@
     <string name="amb_temp">Ambient Temp</string>
     <string name="aux_bat">Aux Battery</string>
     <string name="range">Range (dash / min / max)</string>
-    <string name="send_data">Send Data to ABRP API</string>
+    <string name="send_data">Send Data via MQTT</string>
     <string name="auto_reconnect">Auto reconnect</string>
     <string name="channel_name">Test-Channel</string>
     <string name="channel_description">Test-Description</string>
