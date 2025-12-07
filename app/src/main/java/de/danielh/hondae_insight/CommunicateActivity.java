@@ -52,7 +52,7 @@ import java.net.URI; // Required for parsing the address
 
 public class CommunicateActivity extends AppCompatActivity implements LocationListener {
 
-    public static final int CAN_BUS_SCAN_INTERVALL = 1000;
+    public static final int CAN_BUS_SCAN_INTERVALL = 30000;
     public static final int WAIT_FOR_NEW_MESSAGE_TIMEOUT = 250;
     public static final int WAIT_TIME_BETWEEN_COMMAND_SENDS_MS = 50;
     public static final String VIN_ID = "1862F190";
@@ -325,19 +325,25 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
         }
     }
 
-    private void loop() { //CAN messages loop
+private void loop() { // CAN messages loop
         _loopRunning = true;
-        try {
-            while (_loopRunning) {
+        
+        // MOVED: The 'while' loop is the OUTER container
+        while (_loopRunning) {
+            try {
                 _sysTimeMs = System.currentTimeMillis();
+                
+                // 1. Fetch Data
                 loopMessagesToVariables();
+
+                // 2. Update UI & MQTT
                 _epoch = _sysTimeMs / 1000;
                 setText(_ambientTempText, _ambientTemp + ".0°C");
                 setText(_sohText, String.format(Locale.ENGLISH, "%1$05.2f%%", _soh));
                 setText(_ampText, String.format(Locale.ENGLISH, "%1$06.2fA", _amp));
                 setText(_voltText, String.format(Locale.ENGLISH, "%1$.1f/%2$.2fV", _volt, _volt / 96));
                 setText(_kwText, String.format(Locale.ENGLISH, "%1$05.1fkW", _power));
-                ;
+                
                 setText(_socMinText, String.format(Locale.ENGLISH, "%1$05.2f%%", _socMin));
                 setText(_socMaxText, String.format(Locale.ENGLISH, "%1$05.2f%%", _socMax));
                 setText(_socDeltaText, String.format(Locale.ENGLISH, "%1$4.2f%%", _socDelta));
@@ -353,127 +359,155 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
 
                 if (_newMessage > 4) {
                     setText(_messageText, String.valueOf(_epoch));
+                    
+                    // Notification Logic
                     if (_lastEpochNotification + 10 < _epoch) {
                         _notificationBuilder.setContentText("SoC " + String.valueOf(_soc) + "%");
-                        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                            // TODO: Consider calling
-                            //    ActivityCompat#requestPermissions
-                            // here to request the missing permissions, and then overriding
-                            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
-                            //                                          int[] grantResults)
-                            // to handle the case where the user grants the permission. See the documentation
-                            // for ActivityCompat#requestPermissions for more details.
-                            return;
+                        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+                            _notificationManagerCompat.notify(NOTIFICATION_ID, _notificationBuilder.build());
+                            _lastEpochNotification = _epoch;
                         }
-                        _notificationManagerCompat.notify(NOTIFICATION_ID, _notificationBuilder.build());
-                        _lastEpochNotification = _epoch;
                     }
+                    
                     writeLineToLogFile();
+                    
+                    // MQTT Logic
                     if (_sendDataToIternioRunning && _lastEpoch + 1 < _epoch) {
-                        // UPDATED FOR MQTT:
-                        // We don't need to build a URL string here anymore.
-                        // The new sendDataToIternoAPI method reads the variables (_soc, _speed, etc.) directly.
-                        
                         _lastEpoch = _epoch;
-                        
-                        // Just start the thread. 
-                        // We use the simple constructor: new Thread(Runnable)
                         new Thread(this::sendDataToIternoAPI).start();
                     }
                 } else {
-                    setText(_messageText, "No new Message from CAN... wait" + String.valueOf(CAN_BUS_SCAN_INTERVALL) + "ms");
-                    Thread.sleep(CAN_BUS_SCAN_INTERVALL);
+                    setText(_messageText, "Incomplete data (" + _newMessage + "), retrying...");
                 }
                 _newMessage = 0;
-            }
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        } catch (Exception e) {
-            if (e.getMessage() != null) {
-                setText(_messageText, e.getMessage());
-            } else {
-                setText(_messageText, "unexpected Exception");
-            }
-            try {
+
+                // 3. SUCCESS SLEEP: The heartbeat
+                // This keeps the loop running at a steady 30s pace when things are working
                 Thread.sleep(CAN_BUS_SCAN_INTERVALL);
-            } catch (InterruptedException e2) {
-                throw new RuntimeException(e2);
+
+            } catch (InterruptedException e) {
+                // If the system tries to stop the thread (e.g. app closing)
+                _loopRunning = false;
+                
+            } catch (Exception e) {
+                // 4. ERROR HANDLING (Now inside the loop!)
+                // If a crash happens, we end up here, wait, and then LOOP AGAIN.
+                
+                String errorMsg = e.getMessage() != null ? e.getMessage() : "Unknown Error";
+                setText(_messageText, "Error: " + errorMsg + ". Retrying in " + (CAN_BUS_SCAN_INTERVALL/1000) + "s...");
+
+                // ERROR SLEEP: Wait 30s before trying again so we don't spam errors
+                try {
+                    Thread.sleep(CAN_BUS_SCAN_INTERVALL);
+                } catch (InterruptedException ie) {
+                    _loopRunning = false;
+                }
             }
         }
+        
+        // Loop has finished (user pressed disconnect or app closed)
         _carConnected = false;
     }
 
-    private void loopMessagesToVariables() throws InterruptedException {
+private void loopMessagesToVariables() throws InterruptedException {
         for (String command : _loopCommands) {
             synchronized (_viewModel.getNewMessageParsed()) {
                 _viewModel.sendMessage(command + "\n\r");
                 _viewModel.getNewMessageParsed().wait(WAIT_FOR_NEW_MESSAGE_TIMEOUT);
+                
                 if (_viewModel.isNewMessage()) {
                     final String message = _viewModel.getMessage();
                     final String messageID = _viewModel.getMessageID();
+
+                    // 1. Check for valid message length BEFORE parsing to prevent crashes
+                    // We check if the message is roughly long enough for the data we need.
+                    
                     if (messageID.equals(AMBIENT_ID)) {
-                        _ambientTemp = Integer.valueOf(message.substring(42, 44), 16).byteValue();
-                        _newMessage++;
+                        if (message.length() >= 44) {
+                            _ambientTemp = Integer.valueOf(message.substring(42, 44), 16).byteValue();
+                            _newMessage++;
+                        }
+                        
                     } else if (messageID.equals(SOH_ID)) {
-                        _soh = Integer.parseInt(message.substring(198, 202), 16) / 100.0;
-                        _amp = Math.round((Integer.valueOf(message.substring(280, 284), 16).shortValue() / 34.0) * 100.0) / 100.0;
-                        _volt = Integer.parseInt(message.substring(76, 80), 16) / 10.0;
-                        _power = Math.round(_amp * _volt / 1000.0 * 10.0) / 10.0;
-                        _newMessage++;
+                        // SOH needs up to index 284
+                        if (message.length() >= 285) {
+                            _soh = Integer.parseInt(message.substring(198, 202), 16) / 100.0;
+                            _amp = Math.round((Integer.valueOf(message.substring(280, 284), 16).shortValue() / 34.0) * 100.0) / 100.0;
+                            _volt = Integer.parseInt(message.substring(76, 80), 16) / 10.0;
+                            _power = Math.round(_amp * _volt / 1000.0 * 10.0) / 10.0;
+                            _newMessage++;
+                        }
+
                     } else if (messageID.equals(SOC_ID)) {
-                        _socMin = Integer.parseInt(message.substring(142, 146), 16) / 100.0;
-                        _socMax = Integer.parseInt(message.substring(138, 142), 16) / 100.0;
-                        _socDelta = Math.round((_socMax - _socMin) * 100.0) / 100.0;
-                        _soc = Integer.parseInt(message.substring(156, 160), 16) / 100.0;
-                        _isCharging = message.charAt(161) == '1';
-                        switch (message.substring(277, 278)) {
-                            case "2":
-                                _chargingConnection = ChargingConnection.AC;
-                                break;
-                            case "3":
-                                _chargingConnection = ChargingConnection.DC;
-                                break;
-                            default:
-                                _chargingConnection = ChargingConnection.NC;
-                        }
-                        _newMessage++;
-                    } else if (messageID.equals(BATTEMP_ID)) {
-                        _batTemp = Integer.valueOf(message.substring(410, 414), 16).shortValue() / 10.0;
-                        _newMessage++;
-                    } else if (messageID.equals(ODO_ID)) {
-                        _odo = Integer.parseInt(message.substring(18, 26), 16);
-                        if (_lastOdo < _odo) {
-                            _lastOdo = _odo;
-                            _socHistory[_socHistoryPosition] = _soc;
-                            _socMinHistory[_socHistoryPosition] = _socMin;
-                            _socMaxHistory[_socHistoryPosition] = _socMax;
-                            _batTempHistory[_socHistoryPosition] = _batTemp;
-                            _socHistoryPosition = (_socHistoryPosition + 1) % (RANGE_ESTIMATE_WINDOW_5KM + 1);
-                            //Should be _socHistoryPosition - RANGE_ESTIMATE_WINDOW
-                            //but Java keeps the negative sign
-                            double socDelta = _socHistory[(_socHistoryPosition + 1) % (RANGE_ESTIMATE_WINDOW_5KM + 1)] - _soc;
-                            double socMinDelta = _socMinHistory[(_socHistoryPosition + 1) % (RANGE_ESTIMATE_WINDOW_5KM + 1)] - _socMin;
-                            double socMaxDelta = _socMaxHistory[(_socHistoryPosition + 1) % (RANGE_ESTIMATE_WINDOW_5KM + 1)] - _socMax;
-                            double batTempDelta = _batTemp - _batTempHistory[(_socHistoryPosition + 1) % (RANGE_ESTIMATE_WINDOW_5KM + 1)];
-                            long socRange = Math.round((_soc / socDelta) * RANGE_ESTIMATE_WINDOW_5KM);
-                            long socMinRange = Math.round((_socMin / socMinDelta) * RANGE_ESTIMATE_WINDOW_5KM);
-                            long socMaxRange = Math.round((_socMax / socMaxDelta) * RANGE_ESTIMATE_WINDOW_5KM);
-                            double batTempChange = batTempDelta / RANGE_ESTIMATE_WINDOW_5KM;
-                            if (socRange >= 0 || socMinRange >= 0 || socMaxRange >= 0) {
-                                setText(_rangeText, String.format(Locale.ENGLISH, "%1$03dkm / %2$03dkm / %3$03dkm", socRange, socMinRange, socMaxRange));
-                                setText(_batTempDeltaText, String.format(Locale.ENGLISH, "%1$.2fK/km", batTempChange));
-                                //setText(_rangeText, socRange + "km / " + socMinRange + "km / " + socMaxRange + "km");
-                            } else {
-                                setText(_rangeText, "---km / ---km / ---km");
+                        // SOC needs up to index 278
+                        if (message.length() >= 280) {
+                            _socMin = Integer.parseInt(message.substring(142, 146), 16) / 100.0;
+                            _socMax = Integer.parseInt(message.substring(138, 142), 16) / 100.0;
+                            _socDelta = Math.round((_socMax - _socMin) * 100.0) / 100.0;
+                            _soc = Integer.parseInt(message.substring(156, 160), 16) / 100.0;
+                            
+                            // Safety check for charAt
+                            if (message.length() > 161) {
+                                _isCharging = message.charAt(161) == '1';
                             }
+                            
+                            String connectionType = message.substring(277, 278);
+                            switch (connectionType) {
+                                case "2":
+                                    _chargingConnection = ChargingConnection.AC;
+                                    break;
+                                case "3":
+                                    _chargingConnection = ChargingConnection.DC;
+                                    break;
+                                default:
+                                    _chargingConnection = ChargingConnection.NC;
+                            }
+                            _newMessage++;
                         }
-                        _newMessage++;
+
+                    } else if (messageID.equals(BATTEMP_ID)) {
+                        // BatTemp needs index 414
+                        if (message.length() >= 415) {
+                            _batTemp = Integer.valueOf(message.substring(410, 414), 16).shortValue() / 10.0;
+                            _newMessage++;
+                        }
+                        
+                    } else if (messageID.equals(ODO_ID)) {
+                        // ODO needs index 26
+                        if (message.length() >= 26) {
+                            _odo = Integer.parseInt(message.substring(18, 26), 16);
+                            if (_lastOdo < _odo) {
+                                _lastOdo = _odo;
+                                // ... (Your existing ODO history logic remains exactly the same here) ...
+                                _socHistory[_socHistoryPosition] = _soc;
+                                _socMinHistory[_socHistoryPosition] = _socMin;
+                                _socMaxHistory[_socHistoryPosition] = _socMax;
+                                _batTempHistory[_socHistoryPosition] = _batTemp;
+                                _socHistoryPosition = (_socHistoryPosition + 1) % (RANGE_ESTIMATE_WINDOW_5KM + 1);
+                                
+                                double socDelta = _socHistory[(_socHistoryPosition + 1) % (RANGE_ESTIMATE_WINDOW_5KM + 1)] - _soc;
+                                double socMinDelta = _socMinHistory[(_socHistoryPosition + 1) % (RANGE_ESTIMATE_WINDOW_5KM + 1)] - _socMin;
+                                double socMaxDelta = _socMaxHistory[(_socHistoryPosition + 1) % (RANGE_ESTIMATE_WINDOW_5KM + 1)] - _socMax;
+                                double batTempDelta = _batTemp - _batTempHistory[(_socHistoryPosition + 1) % (RANGE_ESTIMATE_WINDOW_5KM + 1)];
+                                long socRange = Math.round((_soc / socDelta) * RANGE_ESTIMATE_WINDOW_5KM);
+                                long socMinRange = Math.round((_socMin / socMinDelta) * RANGE_ESTIMATE_WINDOW_5KM);
+                                long socMaxRange = Math.round((_socMax / socMaxDelta) * RANGE_ESTIMATE_WINDOW_5KM);
+                                double batTempChange = batTempDelta / RANGE_ESTIMATE_WINDOW_5KM;
+                                if (socRange >= 0 || socMinRange >= 0 || socMaxRange >= 0) {
+                                    setText(_rangeText, String.format(Locale.ENGLISH, "%1$03dkm / %2$03dkm / %3$03dkm", socRange, socMinRange, socMaxRange));
+                                    setText(_batTempDeltaText, String.format(Locale.ENGLISH, "%1$.2fK/km", batTempChange));
+                                } else {
+                                    setText(_rangeText, "---km / ---km / ---km");
+                                }
+                            }
+                            _newMessage++;
+                        }
+                        
                     } else if (message.matches("\\d+\\.\\dV")) { //Aux Bat Voltage
                         _auxBat = Double.parseDouble(message.substring(0, message.length() - 1));
                         setText(_auxBatText, message);
-                    } else {
-                        //setText(_messageText, message);
                     }
+                    
                     _viewModel.setNewMessageProcessed();
                 }
             }
