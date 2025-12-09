@@ -130,6 +130,7 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
     private int _socHistoryPosition = 0;
     private int _lastOdo = Integer.MIN_VALUE, _odo;
     private String _vin;
+    private String _lat = "0.0", _lon = "0.0";
     private String _gpsStatus = "No Fix"; // Standardwert
     private double _elevation;
     private ChargingConnection _chargingConnection;
