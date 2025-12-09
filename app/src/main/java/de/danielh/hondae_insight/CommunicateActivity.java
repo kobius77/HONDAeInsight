@@ -53,7 +53,7 @@ import java.net.URI; // Required for parsing the address
 public class CommunicateActivity extends AppCompatActivity implements LocationListener {
 
     public static final int CAN_BUS_SCAN_INTERVALL = 30000;
-    public static final int WAIT_FOR_NEW_MESSAGE_TIMEOUT = 250;
+    public static final int WAIT_FOR_NEW_MESSAGE_TIMEOUT = 1000;
     public static final int WAIT_TIME_BETWEEN_COMMAND_SENDS_MS = 50;
     public static final String VIN_ID = "1862F190";
     public static final String AMBIENT_ID = "39627028";
