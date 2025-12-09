@@ -115,7 +115,7 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
     private final String LOG_FILE_HEADER = "sysTimeMs,ODO,SoC (dash),SoC (min),SoC (max),SoH,Battemp,Ambienttemp,kW,Amp,Volt,AuxBat,Connection,Charging,Speed,Lat,Lon";
     private TextView _connectionText, _vinText, _messageText, _socMinText, _socMaxText, _socDeltaText,
             _socDashText, _batTempText, _batTempDeltaText, _ambientTempText, _sohText, _kwText, _ampText, _voltText, _auxBatText, _odoText,
-            _rangeText, _chargingText, _speedText, _latText, _lonText, _apiStatusText;
+            _rangeText, _chargingText, _speedText, _gpsStatusText, _apiStatusText;
     private EditText _abrpUserTokenText;
     private Switch _iternioSendToAPISwitch;
     private CheckBox _isChargingCheckBox;
@@ -129,7 +129,8 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
     private final double[] _batTempHistory = new double[RANGE_ESTIMATE_WINDOW_5KM + 1];
     private int _socHistoryPosition = 0;
     private int _lastOdo = Integer.MIN_VALUE, _odo;
-    private String _vin, _lat, _lon;
+    private String _vin;
+    private String _gpsStatus = "No Fix"; // Standardwert
     private double _elevation;
     private ChargingConnection _chargingConnection;
     private boolean _isCharging;
@@ -195,8 +196,7 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
         _messageText = findViewById(R.id.communicate_message);
         _vinText = findViewById(R.id.communicate_vin);
         _speedText = findViewById(R.id.communicate_speed);
-        _latText = findViewById(R.id.communicate_lat);
-        _lonText = findViewById(R.id.communicate_lon);
+        _gpsStatusText = findViewById(R.id.communicate_gps_status);
         _socMinText = findViewById(R.id.communicate_soc_min);
         _socMaxText = findViewById(R.id.communicate_soc_max);
         _socDashText = findViewById(R.id.communicate_soc_dash);
@@ -367,8 +367,7 @@ private void loop() { // CAN messages loop
                 setText(_odoText, _odo + "km");
 
                 setText(_speedText, _speed + "km/h");
-                setText(_latText, _lat);
-                setText(_lonText, _lon);
+                setText(_gpsStatusText, _gpsStatus);
 
                 if (_newMessage > 4) {
                     setText(_messageText, String.valueOf(_epoch));
@@ -808,9 +807,15 @@ private void loopMessagesToVariables() throws InterruptedException {
     @Override
     public void onLocationChanged(Location location) {
         _speed = Math.round(location.getSpeed() * 36) / 10.0;
+        _elevation = Math.round(location.getAltitude() * 10.0) / 10.0;
+        
+        // show gps status
+        int accuracy = (int) location.getAccuracy();
+        _gpsStatus = "Fix (±" + accuracy + "m)";
+        
+        // for MQTT
         _lat = String.valueOf(location.getLatitude());
         _lon = String.valueOf(location.getLongitude());
-        _elevation = Math.round(location.getAltitude() * 10.0) / 10.0;
     }
 
     enum ChargingConnection {
