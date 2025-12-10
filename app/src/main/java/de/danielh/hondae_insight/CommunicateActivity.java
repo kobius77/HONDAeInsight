@@ -122,6 +122,8 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
 
     private double _soc, _socMin, _socMax, _socDelta, _soh, _speed, _power, _batTemp, _amp, _volt, _auxBat;
 
+    private boolean _userRequestedDisconnect = false;
+    
     private byte _ambientTemp;
     private final double[] _socHistory = new double[RANGE_ESTIMATE_WINDOW_5KM + 1];
     private final double[] _socMinHistory = new double[RANGE_ESTIMATE_WINDOW_5KM + 1];
@@ -160,14 +162,31 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
             getSupportActionBar().setDisplayHomeAsUpEnabled(true);
         }
 
-        // Setup our ViewModel
+        // --- AUTO-CONNECT LOGIC START ---
+        String deviceName = getIntent().getStringExtra("device_name");
+        String deviceMac = getIntent().getStringExtra("device_mac");
+        
+        SharedPreferences prefs = getPreferences(MODE_PRIVATE);
+
+        if (deviceMac != null) {
+            // Wir kommen frisch aus der Auswahl -> Speichern!
+            prefs.edit().putString("saved_device_name", deviceName)
+                        .putString("saved_device_mac", deviceMac)
+                        .apply();
+        } else {
+            // Wir wurden einfach so gestartet -> Laden!
+            deviceName = prefs.getString("saved_device_name", "Unknown Device");
+            deviceMac = prefs.getString("saved_device_mac", null);
+        }
+
+        // Setup ViewModel
         _viewModel = ViewModelProviders.of(this).get(CommunicateViewModel.class);
-        // This method return false if there is an error, so if it does, we should close.
-        if (!_viewModel.setupViewModel(getIntent().getStringExtra("device_name"), getIntent().getStringExtra("device_mac"))) {
-            _loopRunning = false;
+        if (deviceMac == null || !_viewModel.setupViewModel(deviceName, deviceMac)) {
+            // Wenn wir gar keine Adresse haben, müssen wir schließen (zurück zur Auswahl)
             finish();
             return;
         }
+        // --- AUTO-CONNECT LOGIC END ---
 
         _preferences = getPreferences(MODE_PRIVATE);
 
@@ -229,7 +248,7 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
         ImageButton disconnectButton = findViewById(R.id.button_disconnect_device);
         if (disconnectButton != null) {
             disconnectButton.setOnClickListener(v -> {
-                // Stoppt den Loop, trennt Bluetooth und schließt die Activity
+                _userRequestedDisconnect = true; // WICHTIG: Merk dir, das war Absicht!
                 _loopRunning = false;
                 _viewModel.disconnect();
                 getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -689,38 +708,42 @@ private void loopMessagesToVariables() throws InterruptedException {
     private void onConnectionStatus(CommunicateViewModel.ConnectionStatus connectionStatus) {
         switch (connectionStatus) {
             case CONNECTED:
+                _userRequestedDisconnect = false; // Wir sind drin, alles gut.
                 _connectionText.setText(R.string.status_connected);
+                // ... (Button Updates wie gehabt) ...
                 _connectButton.setEnabled(true);
                 _connectButton.setText(R.string.disconnect);
-                _connectButton.setOnClickListener(v -> _viewModel.disconnect());
+                _connectButton.setOnClickListener(v -> {
+                    _userRequestedDisconnect = true;
+                    _viewModel.disconnect();
+                });
                 new Thread(this::connectCAN).start();
                 break;
 
             case CONNECTING:
                 _connectionText.setText(R.string.status_connecting);
-                _connectButton.setEnabled(true);
-                _connectButton.setText(R.string.stop);
-                _viewModel.setRetry(true);
-                _connectButton.setOnClickListener(v -> _viewModel.setRetry(false));
+                // ...
                 break;
 
             case DISCONNECTED:
                 _loopRunning = false;
                 _connectionText.setText(R.string.status_disconnected);
-                _connectButton.setEnabled(true);
-                _connectButton.setText(R.string.connect);
-                _connectButton.setOnClickListener(v -> _viewModel.connect());
+                
                 closeLogFile();
-                _retries = 0;
+                
+                // AUTO-RECONNECT LOGIC:
+                if (!_userRequestedDisconnect) {
+                    // Wenn es keine Absicht war (Verbindungsabbruch), sofort wieder versuchen!
+                    // Wir warten 2 Sekunden, um Spamming zu vermeiden
+                    new android.os.Handler().postDelayed(() -> _viewModel.connect(), 2000);
+                }
                 break;
 
             case RETRY:
-                _retries++;
-                if (_viewModel.isRetry() && _retries < MAX_RETRY) {
-                    _viewModel.connect();
-                } else {
-                    _viewModel.disconnect();
-                }
+                // Endlosschleife: Wenn es nicht klappt, warte 2s und probier es nochmal.
+                // Egal ob 5 mal oder 5000 mal.
+                 new android.os.Handler().postDelayed(() -> _viewModel.connect(), 2000);
+                 break;
         }
     }
 
