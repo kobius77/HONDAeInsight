@@ -20,17 +20,19 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.Checkable;
+import android.widget.CompoundButton;
 import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.Switch;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider; // Updated from ViewModelProviders
 
 import java.io.File;
 import java.io.PrintWriter;
@@ -102,7 +104,9 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
     private Switch _mqttSwitch;
     
     private CheckBox _isChargingCheckBox;
-    private Button _connectButton;
+    
+    // CHANGED: Replaced Button with Switch for Connection
+    private Switch _connectSwitch;
 
     // Data Variables
     private double _soc, _socMin, _socMax, _socDelta, _soh, _speed, _power, _batTemp, _amp, _volt, _auxBat;
@@ -166,7 +170,8 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
             deviceMac = prefs.getString("saved_device_mac", null);
         }
 
-        _viewModel = ViewModelProviders.of(this).get(CommunicateViewModel.class);
+        // Updated ViewModel init
+        _viewModel = new ViewModelProvider(this).get(CommunicateViewModel.class);
         if (deviceMac == null || !_viewModel.setupViewModel(deviceName, deviceMac)) {
             finish();
             return;
@@ -213,6 +218,10 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
         // MQTT UI Setup
         _mqttUrlText = findViewById(R.id.communicate_mqtt_url);
         _mqttSwitch = findViewById(R.id.communicate_mqtt_switch);
+        
+        // Setup Keyboard "Done" action
+        _mqttUrlText.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        _mqttUrlText.setSingleLine(true);
 
         // Handle "Enter" / "Done" on keyboard
         _mqttUrlText.setOnEditorActionListener((v, actionId, event) -> {
@@ -224,9 +233,9 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
                 edit.putString(PREFS_KEY_MQTT_URL, v.getText().toString());
                 edit.apply();
 
-                // 2. UI cleanup
+                // 2. UI cleanup - Pass the specific view to hide keyboard
                 v.clearFocus();
-                hideKeyboard();
+                hideKeyboard(v);
 
                 // 3. Force Reconnect
                 restartMqtt();
@@ -239,9 +248,12 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
         _mqttSwitch.setChecked(_preferences.getBoolean(PREFS_KEY_MQTT_SWITCH, false));
         _mqttUrlText.setText(_preferences.getString(PREFS_KEY_MQTT_URL, "tcp://"));
 
-        _connectButton = findViewById(R.id.communicate_connect);
+        // CHANGED: Use Switch for Connection Logic
+        _connectSwitch = findViewById(R.id.communicate_connect);
+        // We set the listener in 'onConnectionStatus' to avoid loops, or set a base one here:
+        _connectSwitch.setOnCheckedChangeListener(this::handleConnectionSwitch);
         
-        // Disconnect Button
+        // Disconnect Button (Icon in Toolbar?)
         ImageButton disconnectButton = findViewById(R.id.button_disconnect_device);
         if (disconnectButton != null) {
             disconnectButton.setOnClickListener(v -> {
@@ -277,6 +289,19 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
         
         // Connect to MQTT immediately on startup
         new Thread(this::connectToMqtt).start();
+    }
+
+    // New helper to handle the connection switch user interaction
+    private void handleConnectionSwitch(CompoundButton buttonView, boolean isChecked) {
+        if (!buttonView.isPressed()) return; // Only react if user actually pressed it
+
+        if (isChecked) {
+            // User wants to Connect
+            _viewModel.connect();
+        } else {
+            // User wants to Disconnect
+            _viewModel.disconnect();
+        }
     }
 
     @Override
@@ -323,8 +348,8 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
         }).start();
     }
 
-    private void hideKeyboard() {
-        View view = this.getCurrentFocus();
+    // CHANGED: Improved Keyboard Hiding
+    private void hideKeyboard(View view) {
         if (view != null) {
             InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
             imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
@@ -681,30 +706,33 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
         return output.toString();
     }
 
+    // CHANGED: Logic to handle switch visual state vs actual connection actions
     private void onConnectionStatus(CommunicateViewModel.ConnectionStatus connectionStatus) {
+        // Temporarily remove listener to prevent loops when we setChecked() programmatically
+        _connectSwitch.setOnCheckedChangeListener(null);
+
         switch (connectionStatus) {
             case CONNECTED:
                 _connectionText.setText(R.string.status_connected);
-                _connectButton.setEnabled(true);
-                _connectButton.setText(R.string.disconnect);
-                _connectButton.setOnClickListener(v -> _viewModel.disconnect());
+                _connectSwitch.setChecked(true);
+                _connectSwitch.setEnabled(true);
+                // Optionally set text if your switch supports it, e.g., _connectSwitch.setText(R.string.disconnect);
+                
                 new Thread(this::connectCAN).start();
                 break;
 
             case CONNECTING:
                 _connectionText.setText(R.string.status_connecting);
-                _connectButton.setEnabled(true);
-                _connectButton.setText(R.string.stop);
+                _connectSwitch.setChecked(true); // Keep it "On" while trying
+                _connectSwitch.setEnabled(false); // Disable interaction
                 _viewModel.setRetry(true);
-                _connectButton.setOnClickListener(v -> _viewModel.setRetry(false));
                 break;
 
             case DISCONNECTED:
                 _loopRunning = false;
                 _connectionText.setText(R.string.status_disconnected);
-                _connectButton.setEnabled(true);
-                _connectButton.setText(R.string.connect);
-                _connectButton.setOnClickListener(v -> _viewModel.connect());
+                _connectSwitch.setChecked(false);
+                _connectSwitch.setEnabled(true);
                 closeLogFile();
                 _retries = 0;
                 break;
@@ -716,14 +744,22 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
                 } else {
                     _viewModel.disconnect();
                 }
+                break;
         }
+
+        // Re-attach listener
+        _connectSwitch.setOnCheckedChangeListener(this::handleConnectionSwitch);
     }
 
     private void openNewFileForWriting() {
         try {
+            // Safety check for directory
+            File[] dirs = this.getExternalMediaDirs();
+            if (dirs == null || dirs.length == 0) return;
+
             SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd-HH-mm-ss");
             Date now = new Date();
-            File logFile = new File(this.getExternalMediaDirs()[0], _vin + "-" + sdf.format(now) + ".csv");
+            File logFile = new File(dirs[0], _vin + "-" + sdf.format(now) + ".csv");
             logFile.createNewFile();
             _logFileWriter = new PrintWriter(logFile);
             _logFileWriter.println(LOG_FILE_HEADER);
