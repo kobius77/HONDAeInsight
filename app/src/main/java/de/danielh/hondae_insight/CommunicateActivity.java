@@ -36,6 +36,10 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.Locale;
 
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
+import android.view.KeyEvent;
+
 // MQTT Imports
 import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
@@ -208,25 +212,26 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
         _rangeText = findViewById(R.id.communicate_range);
         _apiStatusText = findViewById(R.id.communicate_api_status);
 
-        // MQTT UI Setup (Renamed)
-        _mqttUrlText = findViewById(R.id.communicate_mqtt_url);
-        _mqttSwitch = findViewById(R.id.communicate_mqtt_switch);
+        // MQTT UI Setup
+        _mqttUrlText.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_DONE ||
+                (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER && event.getAction() == KeyEvent.ACTION_DOWN)) {
 
-        _mqttSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> handleMqttSwitch(isChecked));
-        _mqttSwitch.setChecked(_preferences.getBoolean(PREFS_KEY_MQTT_SWITCH, false));
-        _mqttUrlText.setText(_preferences.getString(PREFS_KEY_MQTT_URL, "tcp://"));
+                // 1. Save the new URL immediately
+                SharedPreferences.Editor edit = _preferences.edit();
+                edit.putString(PREFS_KEY_MQTT_URL, v.getText().toString());
+                edit.apply();
 
-        _connectButton = findViewById(R.id.communicate_connect);
-        
-        // Disconnect Button
-        ImageButton disconnectButton = findViewById(R.id.button_disconnect_device);
-        if (disconnectButton != null) {
-            disconnectButton.setOnClickListener(v -> {
-                _loopRunning = false;
-                _viewModel.disconnect();
-                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-                finish();
-            });
+                // 2. Hide Keyboard & Clear Focus
+                v.clearFocus();
+                hideKeyboard();
+
+                // 3. FORCE Reconnect with new settings
+                restartMqtt();
+                return true;
+            }
+            return false;
+        });
         }
 
         _viewModel.getConnectionStatus().observe(this, this::onConnectionStatus);
@@ -722,6 +727,41 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
         if (_logFileWriter != null) {
             _logFileWriter.flush();
             _logFileWriter.close();
+        }
+    }
+
+    // force the MQTT client to kill the old connection and build a new one
+    private void restartMqtt() {
+        new Thread(() -> {
+            try {
+                // If a client exists, kill it to ensure we don't use old settings
+                if (_mqttClient != null) {
+                    try {
+                        if (_mqttClient.isConnected()) {
+                            _mqttClient.disconnect();
+                        }
+                    } catch (Exception e) { /* ignore cleanup errors */ }
+                    
+                    try { _mqttClient.close(); } catch (Exception e) {}
+                    
+                    _mqttClient = null; // Vital: This forces connectToMqtt() to re-read the URL!
+                }
+                
+                // Now connect with the FRESH URL from the text box
+                connectToMqtt();
+                
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }).start();
+    }
+
+    // utility to close the on-screen keyboard
+    private void hideKeyboard() {
+        android.view.View view = this.getCurrentFocus();
+        if (view != null) {
+            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
         }
     }
 
