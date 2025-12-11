@@ -5,14 +5,12 @@ import android.app.NotificationManager;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.graphics.BitmapFactory;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.Bundle;
 import android.os.Environment;
 import android.text.TextUtils;
-//import android.util.Log;
 import android.view.MenuItem;
 import android.view.WindowManager;
 import android.widget.Button;
@@ -30,100 +28,81 @@ import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 import androidx.lifecycle.ViewModelProviders;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.PrintWriter;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Locale;
 
-import javax.net.ssl.HttpsURLConnection;
-
+// MQTT Imports
 import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
-import java.net.URI; // Required for parsing the address
 
 public class CommunicateActivity extends AppCompatActivity implements LocationListener {
 
     public static final int CAN_BUS_SCAN_INTERVALL = 30000;
     public static final int WAIT_FOR_NEW_MESSAGE_TIMEOUT = 1000;
     public static final int WAIT_TIME_BETWEEN_COMMAND_SENDS_MS = 50;
+
+    // CAN Command IDs
     public static final String VIN_ID = "1862F190";
     public static final String AMBIENT_ID = "39627028";
     public static final String SOH_ID = "F6622021";
     public static final String SOC_ID = "F6622029";
     public static final String BATTEMP_ID = "F662202A";
     public static final String ODO_ID = "39627022";
+
     public static final int RANGE_ESTIMATE_WINDOW_5KM = 5;
-    private static final String USER_TOKEN_PREFS = "abrp_user_token";
-    private static final String ITERNIO_SEND_TO_API_SWITCH = "iternioSendToAPISwitch";
-    private static final String AUTO_RECONNECT_SWITCH = "autoReconnectSwitch";
-    private static final int MAX_RETRY = 5;
+
+    // PREFERENCES KEYS (Renamed Constants, but keeping VALUES same to preserve user data)
+    private static final String PREFS_KEY_MQTT_URL = "abrp_user_token";
+    private static final String PREFS_KEY_MQTT_SWITCH = "iternioSendToAPISwitch";
+    
+    private static final int MAX_RETRY = 5; // Used for Bluetooth logic
 
     private static final String NOTIFICATION_CHANNEL_ID = "SoC";
     private static final int NOTIFICATION_ID = 23;
 
+    // Bluetooth Commands
     private final ArrayList<String> _connectionCommands = new ArrayList<>(Arrays.asList(
-            "ATWS",
-            "ATE0",
-            "ATSP7",
-            "ATAT1",
-            "ATH1",
-            "ATL0",
-            "ATS0",
-            "ATRV",
-            "ATAL",
-            "ATCAF1",
-            "ATSHDA01F1",
-            "ATFCSH18DA01F1",
-            "ATFCSD300000",
-            "ATFCSM1",
-            "ATCFC1",
-            "ATCP18",
-            "ATSHDA07F1",
-            "ATFCSH18DA07F1",
-            "ATCRA18DAF107",
-            "22F190" //VIN
+            "ATWS", "ATE0", "ATSP7", "ATAT1", "ATH1", "ATL0", "ATS0", "ATRV",
+            "ATAL", "ATCAF1", "ATSHDA01F1", "ATFCSH18DA01F1", "ATFCSD300000",
+            "ATFCSM1", "ATCFC1", "ATCP18", "ATSHDA07F1", "ATFCSH18DA07F1",
+            "ATCRA18DAF107", "22F190" //VIN
     ));
 
     private final ArrayList<String> _loopCommands = new ArrayList<>(Arrays.asList(
-            "ATSHDA60F1",
-            "ATFCSH18DA60F1",
-            "ATCRA18DAF160",
+            "ATSHDA60F1", "ATFCSH18DA60F1", "ATCRA18DAF160",
             "227028", //AMBIENT
             "2270229", //ODO
-            "ATSHDA15F1",
-            "ATFCSH18DA15F1",
-            "ATCRA18DAF115",
+            "ATSHDA15F1", "ATFCSH18DA15F1", "ATCRA18DAF115",
             "222021", //SOH VOLT AMP
             "222029", //SOC
-            "ATSHDA01F1",
-            "ATFCSH18DA01F1",
-            "ATCRA18DAF101",
+            "ATSHDA01F1", "ATFCSH18DA01F1", "ATCRA18DAF101",
             "22202A", // BATTTEMP
             "ATRV" // AUX BAT
     ));
 
     private final String LOG_FILE_HEADER = "sysTimeMs,ODO,SoC (dash),SoC (min),SoC (max),SoH,Battemp,Ambienttemp,kW,Amp,Volt,AuxBat,Connection,Charging,Speed,Lat,Lon";
+    
+    // UI Elements
     private TextView _connectionText, _vinText, _messageText, _socMinText, _socMaxText, _socDeltaText,
             _socDashText, _batTempText, _batTempDeltaText, _ambientTempText, _sohText, _kwText, _ampText, _voltText, _auxBatText, _odoText,
             _rangeText, _chargingText, _speedText, _gpsStatusText, _apiStatusText;
-    private EditText _abrpUserTokenText;
-    private Switch _iternioSendToAPISwitch;
-    private CheckBox _isChargingCheckBox;
-
-    private double _soc, _socMin, _socMax, _socDelta, _soh, _speed, _power, _batTemp, _amp, _volt, _auxBat;
-
-    private boolean _userRequestedDisconnect = false;
     
+    // MQTT UI Elements (Renamed)
+    private EditText _mqttUrlText;
+    private Switch _mqttSwitch;
+    
+    private CheckBox _isChargingCheckBox;
+    private Button _connectButton;
+
+    // Data Variables
+    private double _soc, _socMin, _socMax, _socDelta, _soh, _speed, _power, _batTemp, _amp, _volt, _auxBat;
     private byte _ambientTemp;
     private final double[] _socHistory = new double[RANGE_ESTIMATE_WINDOW_5KM + 1];
     private final double[] _socMinHistory = new double[RANGE_ESTIMATE_WINDOW_5KM + 1];
@@ -131,33 +110,40 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
     private final double[] _batTempHistory = new double[RANGE_ESTIMATE_WINDOW_5KM + 1];
     private int _socHistoryPosition = 0;
     private int _lastOdo = Integer.MIN_VALUE, _odo;
+    
     private String _vin;
-    private String _lat = "0.0", _lon = "0.0";
-    private String _gpsStatus = "No Fix"; // Standardwert
+    private String _lat = "0.0", _lon = "0.0"; // Needed for MQTT/Log
+    private String _gpsStatus = "No Fix";
     private double _elevation;
+    
     private ChargingConnection _chargingConnection;
     private boolean _isCharging;
+    
+    // System Variables
     private PrintWriter _logFileWriter;
     private SharedPreferences _preferences;
     private long _sysTimeMs;
     private long _epoch, _lastEpoch, _lastEpochNotification, _lastEpochSuccessfulApiSend;
-    private Button _connectButton;
+    
     private CommunicateViewModel _viewModel;
     private volatile boolean _loopRunning = false;
-    private volatile boolean _sendDataToIternioRunning = false;
+    private volatile boolean _mqttRunning = false; // Was _sendDataToIternioRunning
     private volatile int _retries = 0;
     private boolean _carConnected = false;
     private byte _newMessage;
+
+    // MQTT Persistent Client
+    private MqttClient _mqttClient;
+    private MqttConnectOptions _mqttConnOpts;
 
     NotificationCompat.Builder _notificationBuilder;
     NotificationManagerCompat _notificationManagerCompat;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        // Setup our activity
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_communicate);
-        // Enable the back button in the action bar if possible
+        
         if (getSupportActionBar() != null) {
             getSupportActionBar().setDisplayHomeAsUpEnabled(true);
         }
@@ -166,23 +152,19 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
         String deviceName = getIntent().getStringExtra("device_name");
         String deviceMac = getIntent().getStringExtra("device_mac");
         
-        SharedPreferences prefs = getPreferences(MODE_PRIVATE);
+        SharedPreferences prefs = getPreferences(MODE_PRIVATE); // Temp local var for clarity
 
         if (deviceMac != null) {
-            // Wir kommen frisch aus der Auswahl -> Speichern!
             prefs.edit().putString("saved_device_name", deviceName)
                         .putString("saved_device_mac", deviceMac)
                         .apply();
         } else {
-            // Wir wurden einfach so gestartet -> Laden!
             deviceName = prefs.getString("saved_device_name", "Unknown Device");
             deviceMac = prefs.getString("saved_device_mac", null);
         }
 
-        // Setup ViewModel
         _viewModel = ViewModelProviders.of(this).get(CommunicateViewModel.class);
         if (deviceMac == null || !_viewModel.setupViewModel(deviceName, deviceMac)) {
-            // Wenn wir gar keine Adresse haben, müssen wir schließen (zurück zur Auswahl)
             finish();
             return;
         }
@@ -190,32 +172,23 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
 
         _preferences = getPreferences(MODE_PRIVATE);
 
+        // Notification Setup
         _notificationBuilder = new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
                 .setSmallIcon(R.mipmap.e_logo)
                 .setContentTitle("e Insight")
                 .setContentText("Start")
                 .setOngoing(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT);
-
         createNotificationChannel();
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            // TODO: Consider calling
-            //    ActivityCompat#requestPermissions
-            // here to request the missing permissions, and then overriding
-            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
-            //                                          int[] grantResults)
-            // to handle the case where the user grants the permission. See the documentation
-            // for ActivityCompat#requestPermissions for more details.
-            return;
-        }
         _notificationManagerCompat = NotificationManagerCompat.from(this);
-        //_notificationManagerCompat.notify(NOTIFICATION_ID, _notificationBuilder.build());
 
-        // Setup our Views
+        // UI Setup - Find Views
         _connectionText = findViewById(R.id.communicate_connection_text);
         _messageText = findViewById(R.id.communicate_message);
         _vinText = findViewById(R.id.communicate_vin);
         _speedText = findViewById(R.id.communicate_speed);
+        
+        // Corrected View Binding
         _gpsStatusText = findViewById(R.id.communicate_gps_status);
         _socMinText = findViewById(R.id.communicate_soc_min);
         _socMaxText = findViewById(R.id.communicate_soc_max);
@@ -235,35 +208,33 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
         _rangeText = findViewById(R.id.communicate_range);
         _apiStatusText = findViewById(R.id.communicate_api_status);
 
-        _abrpUserTokenText = findViewById(R.id.communicate_abrp_user_token);
-        _iternioSendToAPISwitch = findViewById(R.id.communicate_iternio_send_to_api);
+        // MQTT UI Setup (Renamed)
+        _mqttUrlText = findViewById(R.id.communicate_mqtt_url);
+        _mqttSwitch = findViewById(R.id.communicate_mqtt_switch);
 
-        _iternioSendToAPISwitch.setOnCheckedChangeListener((buttonView, isChecked) -> handleIternioSendToAPISwitch(isChecked));
-        _iternioSendToAPISwitch.setChecked(_preferences.getBoolean(ITERNIO_SEND_TO_API_SWITCH, false));
-        _abrpUserTokenText.setText(_preferences.getString(USER_TOKEN_PREFS, "tcp://user:pass@HOST:PORT"));
+        _mqttSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> handleMqttSwitch(isChecked));
+        _mqttSwitch.setChecked(_preferences.getBoolean(PREFS_KEY_MQTT_SWITCH, false));
+        _mqttUrlText.setText(_preferences.getString(PREFS_KEY_MQTT_URL, "tcp://"));
 
         _connectButton = findViewById(R.id.communicate_connect);
-
-        // disconnectButton before status
+        
+        // Disconnect Button
         ImageButton disconnectButton = findViewById(R.id.button_disconnect_device);
         if (disconnectButton != null) {
             disconnectButton.setOnClickListener(v -> {
-                _userRequestedDisconnect = true; // WICHTIG: Merk dir, das war Absicht!
                 _loopRunning = false;
                 _viewModel.disconnect();
                 getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 finish();
             });
         }
-        
-        // Start observing the data sent to us by the ViewModel
+
         _viewModel.getConnectionStatus().observe(this, this::onConnectionStatus);
         _viewModel.getDeviceName().observe(this, name -> setTitle(getString(R.string.device_name_format, name)));
 
-
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-        //check for location permissions
+        // Location Permissions
         try {
             if (ContextCompat.checkSelfPermission(getApplicationContext(), android.Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this, new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION}, 101);
@@ -272,50 +243,164 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
             e.printStackTrace();
         }
 
-        //get location manager
         LocationManager lm = (LocationManager) this.getSystemService(Context.LOCATION_SERVICE);
-        lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 0, this);
+        try {
+            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 0, this);
+        } catch (SecurityException e) {
+            // Permission not granted
+        }
 
         checkExternalMedia();
+        
+        // --- NEW: Connect to MQTT immediately on startup ---
+        new Thread(this::connectToMqtt).start();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        // SMART SAVE: Automatically save the MQTT URL whenever the user leaves the app
-        if (_preferences != null && _abrpUserTokenText != null) {
+        // Smart Save: Automatically save the MQTT URL whenever the user leaves the app
+        if (_preferences != null && _mqttUrlText != null) {
             SharedPreferences.Editor edit = _preferences.edit();
-            String currentUrl = _abrpUserTokenText.getText().toString();
-            
-            // Only save if it's not empty
+            String currentUrl = _mqttUrlText.getText().toString();
             if (!currentUrl.isEmpty()) {
-                edit.putString(USER_TOKEN_PREFS, currentUrl);
+                edit.putString(PREFS_KEY_MQTT_URL, currentUrl);
                 edit.apply();
             }
         }
     }
-    
-    private void createNotificationChannel() {
-        // Create the NotificationChannel, but only on API 26+ because
-        // the NotificationChannel class is not in the Support Library.
 
+    @Override
+    protected void onDestroy() {
+        // Close MQTT connection politely
+        try {
+            if (_mqttClient != null && _mqttClient.isConnected()) {
+                _mqttClient.disconnect();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        super.onDestroy();
+    }
+
+    // --- NEW MQTT CONNECTION METHOD ---
+    private void connectToMqtt() {
+        try {
+            // 1. Initialize Client if it doesn't exist yet
+            if (_mqttClient == null) {
+                String rawInput = _preferences.getString(PREFS_KEY_MQTT_URL, "").trim();
+                String brokerUrl = rawInput;
+                String username = null;
+                String password = null;
+
+                // Parse Credentials (tcp://user:pass@host:port)
+                if (rawInput.contains("@") && rawInput.startsWith("tcp://")) {
+                    try {
+                        String withoutScheme = rawInput.substring(6);
+                        int atIndex = withoutScheme.lastIndexOf("@");
+                        if (atIndex != -1) {
+                            String userPass = withoutScheme.substring(0, atIndex);
+                            String hostPort = withoutScheme.substring(atIndex + 1);
+                            brokerUrl = "tcp://" + hostPort;
+                            int colonIndex = userPass.indexOf(":");
+                            if (colonIndex != -1) {
+                                username = userPass.substring(0, colonIndex);
+                                password = userPass.substring(colonIndex + 1);
+                            } else {
+                                username = userPass;
+                            }
+                        }
+                    } catch (Exception e) {
+                        brokerUrl = rawInput; // Fallback
+                    }
+                }
+
+                // Setup Options
+                _mqttConnOpts = new MqttConnectOptions();
+                _mqttConnOpts.setCleanSession(true);
+                _mqttConnOpts.setConnectionTimeout(10); 
+                _mqttConnOpts.setKeepAliveInterval(60); 
+                
+                if (username != null && !username.isEmpty()) {
+                    _mqttConnOpts.setUserName(username);
+                    if (password != null) {
+                        _mqttConnOpts.setPassword(password.toCharArray());
+                    }
+                }
+
+                String clientId = "HondaE_Android_" + System.currentTimeMillis();
+                _mqttClient = new MqttClient(brokerUrl, clientId, new MemoryPersistence());
+            }
+
+            // 2. Connect if not connected
+            if (!_mqttClient.isConnected()) {
+                _mqttClient.connect(_mqttConnOpts);
+                setText(_apiStatusText, "🔵"); 
+            }
+
+        } catch (Exception e) {
+            setText(_apiStatusText, "🔴");
+        }
+    }
+
+    // --- REPURPOSED: PUBLISH ONLY ---
+    private void publishMqttMessage() { 
+        try {
+            // 1. Auto-Reconnect logic
+            if (_mqttClient == null || !_mqttClient.isConnected()) {
+                connectToMqtt();
+            }
+
+            // 2. Publish ONLY if connected
+            if (_mqttClient != null && _mqttClient.isConnected()) {
+                String topic = "hondae/status";
+                
+                String payload = "{" +
+                        "\"soc\":" + _soc +
+                        ",\"soh\":" + _soh +
+                        ",\"power\":" + _power +
+                        ",\"amp\":" + _amp +
+                        ",\"volt\":" + _volt +
+                        ",\"batt_temp\":" + _batTemp +
+                        ",\"ambient_temp\":" + _ambientTemp +
+                        ",\"is_charging\":" + _isCharging +
+                        ",\"charging_mode\":\"" + _chargingConnection.getName() + "\"" +
+                        ",\"speed\":" + _speed +
+                        ",\"odo\":" + _odo +
+                        ",\"lat\":" + _lat +
+                        ",\"lon\":" + _lon +
+                        ",\"elevation\":" + _elevation +
+                        ",\"timestamp\":" + _epoch +
+                        "}";
+
+                MqttMessage message = new MqttMessage(payload.getBytes());
+                message.setQos(0);
+                _mqttClient.publish(topic, message);
+
+                _lastEpochSuccessfulApiSend = _epoch;
+                setText(_apiStatusText, "🔵"); 
+            } else {
+                setText(_apiStatusText, "🔴");
+            }
+
+        } catch (Exception e) {
+            if (_epoch - _lastEpochSuccessfulApiSend > 9) {
+                setText(_apiStatusText, "🔴");
+            }
+        }
+    }
+
+    private void createNotificationChannel() {
         CharSequence name = getString(R.string.channel_name);
         String description = getString(R.string.channel_description);
         int importance = NotificationManager.IMPORTANCE_DEFAULT;
         NotificationChannel channel = new NotificationChannel(NOTIFICATION_CHANNEL_ID, name, importance);
         channel.setDescription(description);
-        // Register the channel with the system; you can't change the importance
-        // or other notification behaviors after this.
         NotificationManager notificationManager = getSystemService(NotificationManager.class);
         notificationManager.createNotificationChannel(channel);
     }
 
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-    }
-
-    private void connectCAN() { //initiate connection over CAN
+    private void connectCAN() { 
         try {
             setText(_apiStatusText, "⚪");
             for (String command : _connectionCommands) {
@@ -353,23 +438,19 @@ public class CommunicateActivity extends AppCompatActivity implements LocationLi
                 _viewModel.disconnect();
             }
         } catch (InterruptedException e) {
-            //Log.d("STATE", e.getMessage());
             throw new RuntimeException(e);
         }
     }
 
-private void loop() { // CAN messages loop
+    private void loop() { 
         _loopRunning = true;
         
-        // MOVED: The 'while' loop is the OUTER container
         while (_loopRunning) {
             try {
                 _sysTimeMs = System.currentTimeMillis();
                 
-                // 1. Fetch Data
                 loopMessagesToVariables();
 
-                // 2. Update UI & MQTT
                 _epoch = _sysTimeMs / 1000;
                 setText(_ambientTempText, _ambientTemp + ".0°C");
                 setText(_sohText, String.format(Locale.ENGLISH, "%1$05.2f%%", _soh));
@@ -392,7 +473,6 @@ private void loop() { // CAN messages loop
                 if (_newMessage > 4) {
                     setText(_messageText, String.valueOf(_epoch));
                     
-                    // Notification Logic
                     if (_lastEpochNotification + 10 < _epoch) {
                         _notificationBuilder.setContentText("SoC " + String.valueOf(_soc) + "%");
                         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
@@ -403,32 +483,25 @@ private void loop() { // CAN messages loop
                     
                     writeLineToLogFile();
                     
-                    // MQTT Logic
-                    if (_sendDataToIternioRunning && _lastEpoch + 1 < _epoch) {
+                    // MQTT Logic - Renamed Variable
+                    if (_mqttRunning && _lastEpoch + 1 < _epoch) {
                         _lastEpoch = _epoch;
-                        new Thread(this::sendDataToIternoAPI).start();
+                        new Thread(this::publishMqttMessage).start();
                     }
                 } else {
                     setText(_messageText, "Incomplete data (" + _newMessage + "), retrying...");
                 }
                 _newMessage = 0;
 
-                // 3. SUCCESS SLEEP: The heartbeat
-                // This keeps the loop running at a steady 30s pace when things are working
                 Thread.sleep(CAN_BUS_SCAN_INTERVALL);
 
             } catch (InterruptedException e) {
-                // If the system tries to stop the thread (e.g. app closing)
                 _loopRunning = false;
                 
             } catch (Exception e) {
-                // 4. ERROR HANDLING (Now inside the loop!)
-                // If a crash happens, we end up here, wait, and then LOOP AGAIN.
-                
                 String errorMsg = e.getMessage() != null ? e.getMessage() : "Unknown Error";
                 setText(_messageText, "Error: " + errorMsg + ". Retrying in " + (CAN_BUS_SCAN_INTERVALL/1000) + "s...");
 
-                // ERROR SLEEP: Wait 30s before trying again so we don't spam errors
                 try {
                     Thread.sleep(CAN_BUS_SCAN_INTERVALL);
                 } catch (InterruptedException ie) {
@@ -436,12 +509,10 @@ private void loop() { // CAN messages loop
                 }
             }
         }
-        
-        // Loop has finished (user pressed disconnect or app closed)
         _carConnected = false;
     }
 
-private void loopMessagesToVariables() throws InterruptedException {
+    private void loopMessagesToVariables() throws InterruptedException {
         for (String command : _loopCommands) {
             synchronized (_viewModel.getNewMessageParsed()) {
                 _viewModel.sendMessage(command + "\n\r");
@@ -451,17 +522,12 @@ private void loopMessagesToVariables() throws InterruptedException {
                     final String message = _viewModel.getMessage();
                     final String messageID = _viewModel.getMessageID();
 
-                    // 1. Check for valid message length BEFORE parsing to prevent crashes
-                    // We check if the message is roughly long enough for the data we need.
-                    
                     if (messageID.equals(AMBIENT_ID)) {
                         if (message.length() >= 44) {
                             _ambientTemp = Integer.valueOf(message.substring(42, 44), 16).byteValue();
                             _newMessage++;
                         }
-                        
                     } else if (messageID.equals(SOH_ID)) {
-                        // SOH needs up to index 284
                         if (message.length() >= 285) {
                             _soh = Integer.parseInt(message.substring(198, 202), 16) / 100.0;
                             _amp = Math.round((Integer.valueOf(message.substring(280, 284), 16).shortValue() / 34.0) * 100.0) / 100.0;
@@ -469,48 +535,35 @@ private void loopMessagesToVariables() throws InterruptedException {
                             _power = Math.round(_amp * _volt / 1000.0 * 10.0) / 10.0;
                             _newMessage++;
                         }
-
                     } else if (messageID.equals(SOC_ID)) {
-                        // SOC needs up to index 278
                         if (message.length() >= 280) {
                             _socMin = Integer.parseInt(message.substring(142, 146), 16) / 100.0;
                             _socMax = Integer.parseInt(message.substring(138, 142), 16) / 100.0;
                             _socDelta = Math.round((_socMax - _socMin) * 100.0) / 100.0;
                             _soc = Integer.parseInt(message.substring(156, 160), 16) / 100.0;
                             
-                            // Safety check for charAt
                             if (message.length() > 161) {
                                 _isCharging = message.charAt(161) == '1';
                             }
                             
                             String connectionType = message.substring(277, 278);
                             switch (connectionType) {
-                                case "2":
-                                    _chargingConnection = ChargingConnection.AC;
-                                    break;
-                                case "3":
-                                    _chargingConnection = ChargingConnection.DC;
-                                    break;
-                                default:
-                                    _chargingConnection = ChargingConnection.NC;
+                                case "2": _chargingConnection = ChargingConnection.AC; break;
+                                case "3": _chargingConnection = ChargingConnection.DC; break;
+                                default: _chargingConnection = ChargingConnection.NC;
                             }
                             _newMessage++;
                         }
-
                     } else if (messageID.equals(BATTEMP_ID)) {
-                        // BatTemp needs index 414
                         if (message.length() >= 415) {
                             _batTemp = Integer.valueOf(message.substring(410, 414), 16).shortValue() / 10.0;
                             _newMessage++;
                         }
-                        
                     } else if (messageID.equals(ODO_ID)) {
-                        // ODO needs index 26
                         if (message.length() >= 26) {
                             _odo = Integer.parseInt(message.substring(18, 26), 16);
                             if (_lastOdo < _odo) {
                                 _lastOdo = _odo;
-                                // ... (Your existing ODO history logic remains exactly the same here) ...
                                 _socHistory[_socHistoryPosition] = _soc;
                                 _socMinHistory[_socHistoryPosition] = _socMin;
                                 _socMaxHistory[_socHistoryPosition] = _socMax;
@@ -534,12 +587,10 @@ private void loopMessagesToVariables() throws InterruptedException {
                             }
                             _newMessage++;
                         }
-                        
                     } else if (message.matches("\\d+\\.\\dV")) { //Aux Bat Voltage
                         _auxBat = Double.parseDouble(message.substring(0, message.length() - 1));
                         setText(_auxBatText, message);
                     }
-                    
                     _viewModel.setNewMessageProcessed();
                 }
             }
@@ -549,124 +600,14 @@ private void loopMessagesToVariables() throws InterruptedException {
         }
     }
 
-    private void sendDataToIternoAPI() { // REPURPOSED FOR MQTT (With Auth)
-        try {
-            // 1. Get the raw input string (e.g., "tcp://user:pass@192.168.1.5:1883")
-            String rawInput = _preferences.getString(USER_TOKEN_PREFS, "").trim();
-            
-            // Default values
-            String brokerUrl = rawInput;
-            String username = null;
-            String password = null;
-
-            // 2. Parse Credentials if "@" symbol is present
-            if (rawInput.contains("@") && rawInput.startsWith("tcp://")) {
-                try {
-                    // Remove "tcp://" to parse the rest easily
-                    String withoutScheme = rawInput.substring(6);
-                    // Split at the last '@' to separate credentials from host
-                    int atIndex = withoutScheme.lastIndexOf("@");
-                    
-                    if (atIndex != -1) {
-                        String userPass = withoutScheme.substring(0, atIndex);
-                        String hostPort = withoutScheme.substring(atIndex + 1);
-                        
-                        // Reconstruct clean broker URL for Paho
-                        brokerUrl = "tcp://" + hostPort;
-                        
-                        // Split username and password
-                        int colonIndex = userPass.indexOf(":");
-                        if (colonIndex != -1) {
-                            username = userPass.substring(0, colonIndex);
-                            password = userPass.substring(colonIndex + 1);
-                        } else {
-                            username = userPass;
-                        }
-                    }
-                } catch (Exception e) {
-                    // If parsing fails, try using raw string
-                    brokerUrl = rawInput;
-                }
-            }
-
-            // 3. Setup MQTT Options
-            MqttConnectOptions connOpts = new MqttConnectOptions();
-            connOpts.setCleanSession(true);
-            connOpts.setConnectionTimeout(5); // 5 seconds timeout
-            
-            // Apply Auth if we found it
-            if (username != null && !username.isEmpty()) {
-                connOpts.setUserName(username);
-                if (password != null) {
-                    connOpts.setPassword(password.toCharArray());
-                }
-            }
-
-            // 4. Construct Payload
-            String clientId = "HondaE_Android_" + System.currentTimeMillis();
-            String topic = "hondae/status";
-            String payload = "{" +
-                    "\"soc\":" + _soc +
-                    ",\"soh\":" + _soh +
-                    ",\"power\":" + _power +
-                    ",\"amp\":" + _amp +
-                    ",\"volt\":" + _volt +
-                    ",\"batt_temp\":" + _batTemp +
-                    ",\"ambient_temp\":" + _ambientTemp +
-                    ",\"is_charging\":" + _isCharging +
-                    ",\"charging_mode\":\"" + _chargingConnection.getName() + "\"" +
-                    ",\"speed\":" + _speed +
-                    ",\"odo\":" + _odo +
-                    ",\"lat\":" + _lat +
-                    ",\"lon\":" + _lon +
-                    ",\"elevation\":" + _elevation +
-                    ",\"timestamp\":" + _epoch +
-                    "}";
-
-            // 5. Connect and Publish
-            MemoryPersistence persistence = new MemoryPersistence();
-            MqttClient sampleClient = new MqttClient(brokerUrl, clientId, persistence);
-            
-            sampleClient.connect(connOpts);
-            
-            MqttMessage message = new MqttMessage(payload.getBytes());
-            message.setQos(0);
-            sampleClient.publish(topic, message);
-            
-            sampleClient.disconnect();
-
-            // Success UI
-            _lastEpochSuccessfulApiSend = _epoch;
-            setText(_apiStatusText, "🔵"); 
-
-        } catch (Exception e) {
-            // Error UI
-            if (_epoch - _lastEpochSuccessfulApiSend > 9) {
-                setText(_apiStatusText, "🔴");
-            }
-            setText(_messageText, "MQTT Err: " + e.getMessage());
-        }
-    }
-
     private void checkExternalMedia() {
-        boolean externalStorageAvailable;
-        boolean externalStorageWriteable;
+        boolean externalStorageWriteable = false;
         String state = Environment.getExternalStorageState();
-
         if (Environment.MEDIA_MOUNTED.equals(state)) {
-            // Can read and write the media
-            externalStorageAvailable = externalStorageWriteable = true;
-        } else if (Environment.MEDIA_MOUNTED_READ_ONLY.equals(state)) {
-            // Can only read the media
-            externalStorageAvailable = true;
-            externalStorageWriteable = false;
-        } else {
-            // Can't read or write
-            externalStorageAvailable = externalStorageWriteable = false;
-        }
+            externalStorageWriteable = true;
+        } 
         if (!externalStorageWriteable) {
-            setText(_messageText, "\n\nExternal Media: readable="
-                    + externalStorageAvailable + " writable=" + false);
+            setText(_messageText, "\n\nExternal Media: writable=" + false);
         }
     }
 
@@ -678,13 +619,13 @@ private void loopMessagesToVariables() throws InterruptedException {
         runOnUiThread(() -> checkable.setChecked(checked));
     }
 
-    private void handleIternioSendToAPISwitch(boolean isChecked) {
-        _sendDataToIternioRunning = isChecked;
+    private void handleMqttSwitch(boolean isChecked) {
+        _mqttRunning = isChecked;
         SharedPreferences.Editor edit = _preferences.edit();
-        edit.putBoolean(ITERNIO_SEND_TO_API_SWITCH, isChecked);
-        String abrpuserTokenTextString = _abrpUserTokenText.getText().toString();
-        if (!TextUtils.isEmpty(abrpuserTokenTextString)) {
-            edit.putString(USER_TOKEN_PREFS, abrpuserTokenTextString);
+        edit.putBoolean(PREFS_KEY_MQTT_SWITCH, isChecked);
+        String urlText = _mqttUrlText.getText().toString();
+        if (!TextUtils.isEmpty(urlText)) {
+            edit.putString(PREFS_KEY_MQTT_URL, urlText);
         }
         edit.apply();
     }
@@ -695,55 +636,48 @@ private void loopMessagesToVariables() throws InterruptedException {
 
     private static String hexToASCII(String hexStr) {
         StringBuilder output = new StringBuilder();
-
         for (int i = 0; i < hexStr.length(); i += 2) {
             String str = hexStr.substring(i, i + 2);
             output.append((char) Integer.parseInt(str, 16));
         }
-
         return output.toString();
     }
 
-    // Called when the ViewModel updates us of our connectivity status
     private void onConnectionStatus(CommunicateViewModel.ConnectionStatus connectionStatus) {
         switch (connectionStatus) {
             case CONNECTED:
-                _userRequestedDisconnect = false; // Wir sind drin, alles gut.
                 _connectionText.setText(R.string.status_connected);
-                // ... (Button Updates wie gehabt) ...
                 _connectButton.setEnabled(true);
                 _connectButton.setText(R.string.disconnect);
-                _connectButton.setOnClickListener(v -> {
-                    _userRequestedDisconnect = true;
-                    _viewModel.disconnect();
-                });
+                _connectButton.setOnClickListener(v -> _viewModel.disconnect());
                 new Thread(this::connectCAN).start();
                 break;
 
             case CONNECTING:
                 _connectionText.setText(R.string.status_connecting);
-                // ...
+                _connectButton.setEnabled(true);
+                _connectButton.setText(R.string.stop);
+                _viewModel.setRetry(true);
+                _connectButton.setOnClickListener(v -> _viewModel.setRetry(false));
                 break;
 
             case DISCONNECTED:
                 _loopRunning = false;
                 _connectionText.setText(R.string.status_disconnected);
-                
+                _connectButton.setEnabled(true);
+                _connectButton.setText(R.string.connect);
+                _connectButton.setOnClickListener(v -> _viewModel.connect());
                 closeLogFile();
-                
-                // AUTO-RECONNECT LOGIC:
-                if (!_userRequestedDisconnect) {
-                    // Wenn es keine Absicht war (Verbindungsabbruch), sofort wieder versuchen!
-                    // Wir warten 2 Sekunden, um Spamming zu vermeiden
-                    new android.os.Handler().postDelayed(() -> _viewModel.connect(), 2000);
-                }
+                _retries = 0;
                 break;
 
             case RETRY:
-                // Endlosschleife: Wenn es nicht klappt, warte 2s und probier es nochmal.
-                // Egal ob 5 mal oder 5000 mal.
-                 new android.os.Handler().postDelayed(() -> _viewModel.connect(), 2000);
-                 break;
+                _retries++;
+                if (_viewModel.isRetry() && _retries < MAX_RETRY) {
+                    _viewModel.connect();
+                } else {
+                    _viewModel.disconnect();
+                }
         }
     }
 
@@ -751,27 +685,17 @@ private void loopMessagesToVariables() throws InterruptedException {
         try {
             SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd-HH-mm-ss");
             Date now = new Date();
-
+            // Using [0] for internal storage
             File logFile = new File(this.getExternalMediaDirs()[0], _vin + "-" + sdf.format(now) + ".csv");
-
             logFile.createNewFile();
-            //Log.d("FILE", logFile + " " + logFile.exists());
-
             _logFileWriter = new PrintWriter(logFile);
             _logFileWriter.println(LOG_FILE_HEADER);
-
         } catch (Exception e) {
-            //Log.d("EXCEPTION", e.getMessage());
-            for (StackTraceElement element : e.getStackTrace()) {
-                //    Log.d("EXCEPTION", element.toString());
-
-            }
+             e.printStackTrace();
         }
-
     }
 
     private void writeLineToLogFile() {
-        // 1. DEFINE 'dataLine' FIRST (This was missing causing your error)
         String dataLine = _sysTimeMs + "," + _odo + "," + _soc + ","
                 + _socMin + "," + _socMax + "," + _soh + "," + _batTemp + ","
                 + _ambientTemp + "," + _power + "," + _amp + "," + _volt + ","
@@ -780,20 +704,15 @@ private void loopMessagesToVariables() throws InterruptedException {
 
         String statusMessage = "";
 
-        // 2. Safety Check: Is the file writer null?
         if (_logFileWriter == null) {
             statusMessage = "LOG FILE MISSING ❌";
         } else {
-            // 3. Write the data
             _logFileWriter.println(dataLine);
-
-            // 4. Verify the write succeeded
             if (_logFileWriter.checkError()) {
                 statusMessage = "WRITE ERROR ❌";
             }
         }
 
-        // 5. Update UI if there is an error
         if (!statusMessage.isEmpty()) {
             setText(_messageText, statusMessage);
         }
@@ -806,25 +725,19 @@ private void loopMessagesToVariables() throws InterruptedException {
         }
     }
 
-    // Called when a button in the action bar is pressed
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         switch (item.getItemId()) {
             case android.R.id.home:
-                // If the back button was pressed, handle it the normal way
                 onBackPressed();
                 return true;
-
             default:
                 return super.onOptionsItemSelected(item);
         }
     }
 
-    // Called when the user presses the back button
     @Override
     public void onBackPressed() {
-        // Schickt die App in den Hintergrund (wie Home-Button),
-        // hält aber die Verbindung und den Loop am Leben.
         moveTaskToBack(true);
     }
 
@@ -833,19 +746,15 @@ private void loopMessagesToVariables() throws InterruptedException {
         _speed = Math.round(location.getSpeed() * 36) / 10.0;
         _elevation = Math.round(location.getAltitude() * 10.0) / 10.0;
         
-        // show gps status
         int accuracy = (int) location.getAccuracy();
         _gpsStatus = "Fix (±" + accuracy + "m)";
         
-        // for MQTT
         _lat = String.valueOf(location.getLatitude());
         _lon = String.valueOf(location.getLongitude());
     }
 
     enum ChargingConnection {
-
         NC("NC", 0),
-
         AC("AC", 0),
         DC("DC", 1);
         private final String _name;
