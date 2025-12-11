@@ -12,9 +12,10 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.RelativeLayout;
 import android.widget.TextView;
+import android.widget.Toast; // Added Import
 
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.lifecycle.ViewModelProvider; // Updated Import
+import androidx.lifecycle.ViewModelProvider;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
@@ -41,8 +42,26 @@ public class MainActivity extends AppCompatActivity {
         // Updated ViewModel initialization
         _viewModel = new ViewModelProvider(this).get(MainActivityViewModel.class);
 
+        // --- NEW CODE START: Listen for errors and close requests from ViewModel ---
+        
+        // 1. Listen for Toast messages (errors like "No Bluetooth")
+        _viewModel.getToastMessage().observe(this, messageResId -> {
+            if (messageResId != null) {
+                Toast.makeText(this, messageResId, Toast.LENGTH_LONG).show();
+            }
+        });
+
+        // 2. Listen for the close signal (if setup failed)
+        _viewModel.getCloseActivity().observe(this, shouldClose -> {
+            if (shouldClose != null && shouldClose) {
+                finish();
+            }
+        });
+        
+        // --- NEW CODE END ---
+
         if (!_viewModel.setupViewModel()) {
-            finish();
+            // We can return here, but the observer above will handle the finish()
             return;
         }
 
@@ -63,8 +82,7 @@ public class MainActivity extends AppCompatActivity {
         _viewModel.getPairedDeviceList().observe(this, adapter::updateList);
         _viewModel.refreshPairedDevices();
 
-        // LOGIC CHANGE: Only auto-connect if this is a fresh start (savedInstanceState is null)
-        // This allows the user to press "Back" to return here without bouncing back.
+        // Only auto-connect if this is a fresh start (savedInstanceState is null)
         if (savedInstanceState == null) {
             checkLastConnectedDevice();
         }
@@ -75,8 +93,6 @@ public class MainActivity extends AppCompatActivity {
         String deviceMac = _preferences.getString(DEVICE_MAC, null);
 
         if (deviceName != null && deviceMac != null) {
-            // Using a Handler is cleaner than new Thread + Sleep
-            // However, usually we don't even need a delay here unless waiting for specific permission callbacks
             new Handler(Looper.getMainLooper()).post(() -> 
                 openCommunicationsActivity(deviceName, deviceMac)
             );
@@ -109,7 +125,7 @@ public class MainActivity extends AppCompatActivity {
         finish();
     }
 
-    // --- ViewHolder and Adapter kept mostly the same for brevity ---
+    // --- ViewHolder and Adapter ---
     private class DeviceViewHolder extends RecyclerView.ViewHolder {
         private final RelativeLayout _layout;
         private final TextView _text1;
@@ -123,7 +139,6 @@ public class MainActivity extends AppCompatActivity {
         }
 
         void setupView(BluetoothDevice device) {
-            // Add null check for device name (some BT devices return null names)
             String name = device.getName() != null ? device.getName() : "Unknown Device";
             _text1.setText(name);
             _text2.setText(device.getAddress());
