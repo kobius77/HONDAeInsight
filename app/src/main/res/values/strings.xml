@@ -38,5 +38,7 @@
     <string name="auto_reconnect">Auto reconnect</string>
     <string name="channel_name">Test-Channel</string>
     <string name="channel_description">Test-Description</string>
+    <string name="send_data">Send Data via MQTT</string>
+    <string name="mqtt_url_hint">tcp://user:pass@192.168.1.x:1883</string>
 
 </resources>
