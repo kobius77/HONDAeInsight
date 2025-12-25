@@ -15,16 +15,11 @@ import com.harrysoft.androidbluetoothserial.SimpleBluetoothDeviceInterface;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.UUID;
-
 import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.disposables.CompositeDisposable;
 import io.reactivex.schedulers.Schedulers;
 
 public class CommunicateViewModel extends AndroidViewModel {
-
-    // Standard Serial Port UUID for ELM327 / OBDII devices
-    private static final String SPP_UUID = "00001101-0000-1000-8000-00805F9B34FB";
 
     private final CompositeDisposable _compositeDisposable = new CompositeDisposable();
     private BluetoothManager _bluetoothManager;
@@ -34,7 +29,7 @@ public class CommunicateViewModel extends AndroidViewModel {
 
     private final MutableLiveData<ConnectionStatus> _connectionStatusData = new MutableLiveData<>();
     private final MutableLiveData<String> _deviceNameData = new MutableLiveData<>();
-    
+
     private String _mac;
     private boolean _connectionAttemptedOrMade = false;
     private boolean _viewModelSetup = false;
@@ -75,25 +70,19 @@ public class CommunicateViewModel extends AndroidViewModel {
             _connectionStatusData.postValue(ConnectionStatus.CONNECTING);
             _connectionAttemptedOrMade = true;
 
-            // STRATEGY: Try default connection first. 
-            // If that fails, catch the error and try forcing the SPP UUID.
+            // Connect asynchronously
             _compositeDisposable.add(_bluetoothManager.openSerialDevice(_mac)
                     .subscribeOn(Schedulers.io())
                     .observeOn(AndroidSchedulers.mainThread())
-                    .onErrorResumeNext(throwable -> {
-                        // FALLBACK: If default connection fails, try forcing UUID
-                        // This fixes issues with cheap ELM327 clones that fail Service Discovery
-                        return _bluetoothManager.openSerialDevice(_mac, SPP_UUID)
-                                .subscribeOn(Schedulers.io())
-                                .observeOn(AndroidSchedulers.mainThread());
-                    })
+                    // Removed the invalid onErrorResumeNext block
                     .subscribe(
-                            device -> onConnected(device.toSimpleDeviceInterface()), 
+                            device -> onConnected(device.toSimpleDeviceInterface()),
                             t -> {
-                                // SHOW THE REAL ERROR
+                                // SHOW THE REAL ERROR TOAST
+                                // This is critical for debugging why it fails
                                 String errorMsg = t.getMessage() != null ? t.getMessage() : "Unknown Error";
-                                toast("Connection Failed: " + errorMsg);
-                                
+                                toast("Connect Error: " + errorMsg);
+
                                 _connectionAttemptedOrMade = false;
                                 _connectionStatusData.postValue(ConnectionStatus.RETRY);
                             }
@@ -166,14 +155,14 @@ public class CommunicateViewModel extends AndroidViewModel {
     @Override
     protected void onCleared() {
         _compositeDisposable.dispose();
-        // Do NOT close _bluetoothManager here (Singleton safety)
+        // Do NOT close _bluetoothManager here.
     }
 
-    // Updated toast to handle Strings directly for error reporting
+    // Updated toast to handle Strings directly
     private void toast(String message) {
         Toast.makeText(getApplication(), message, Toast.LENGTH_LONG).show();
     }
-    
+
     private void toast(@StringRes int messageResource) {
         Toast.makeText(getApplication(), messageResource, Toast.LENGTH_LONG).show();
         if (messageResource == R.string.message_send_error) {
