@@ -90,6 +90,12 @@ public class CommunicateViewModel extends AndroidViewModel {
 
     // Called when the user presses the connect button
     public void connect() {
+        // Safety check: ensure we have a valid MAC and Manager
+        if (_mac == null || _bluetoothManager == null) {
+            toast(R.string.connection_failed);
+            return;
+        }
+
         // Check we are not already connecting or connected
         if (!_connectionAttemptedOrMade) {
             // Connect asynchronously
@@ -191,8 +197,10 @@ public class CommunicateViewModel extends AndroidViewModel {
     protected void onCleared() {
         // Dispose any asynchronous operations that are running
         _compositeDisposable.dispose();
-        // Shutdown bluetooth connections
-        _bluetoothManager.close();
+        
+        // --- FIX: REMOVED _bluetoothManager.close() ---
+        // This was the cause of the immediate "Connection Failed" error.
+        // The BluetoothManager is a Singleton; closing it here kills it for the app.
     }
 
     // Helper method to create toast messages.
@@ -203,7 +211,6 @@ public class CommunicateViewModel extends AndroidViewModel {
         }
     }
 
-    // Getter method for the activity to use.
     // Getter method for the activity to use.
     public LiveData<ConnectionStatus> getConnectionStatus() {
         return _connectionStatusData;
